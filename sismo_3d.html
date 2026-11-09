@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sismo progresivo 3D – Base empotrada vs base aislada</title>
+<style>
+:root{--bg:#f2f1ec;--fg:#1d1d1b;--mut:#66655e;--card:#fffffff0;--bd:#d4d2c9;--ac:#c2410c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#16171a;--fg:#ecebe6;--mut:#a3a29a;--card:#222327f0;--bd:#3a3b40;--ac:#fb923c}}
+:root[data-theme="dark"]{--bg:#16171a;--fg:#ecebe6;--mut:#a3a29a;--card:#222327f0;--bd:#3a3b40;--ac:#fb923c}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}
+#w{position:relative;height:100%}
+#c{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+.p{position:absolute;left:8px;background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:6px 10px}
+.t{top:8px;max-width:370px}.t summary{cursor:pointer;font-weight:600}
+table{border-collapse:collapse;width:100%;margin-top:4px;font-size:12px}
+td,th{padding:2px 6px;text-align:right;border-bottom:1px solid var(--bd)}td:first-child,th:first-child{text-align:left}
+th{color:var(--mut);font-weight:600}.n{color:var(--mut);font-size:11px;margin-top:4px}
+.b{bottom:8px;right:8px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center}
+.b label{display:flex;gap:4px;align-items:center;cursor:pointer}
+button{font:inherit;background:var(--ac);color:#fff;border:0;border-radius:8px;padding:5px 12px;cursor:pointer}
+.lb{position:absolute;transform:translate(-50%,-100%);background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:2px 8px;font-weight:600;font-size:12px;pointer-events:none;white-space:nowrap}
+</style></head><body>
+<div id="w"><canvas id="c"></canvas>
+<div class="lb" id="l1">BASE EMPOTRADA</div><div class="lb" id="l2">BASE AISLADA (HDRB)</div>
+<div class="p t"><b>Sismo progresivo</b> <span id="ph" style="color:var(--mut)"></span>
+<div style="height:8px;background:var(--bd);border-radius:4px;margin:5px 0"><div id="bf" style="height:8px;width:0;background:var(--ac);border-radius:4px"></div></div>
+<div><b>Empotrado:</b> <span id="s1"></span></div><div><b>Aislado:</b> <span id="s2"></span></div>
+<div class="n">Visualización ilustrativa, no es un análisis no lineal. I = 1.0 es el sismo de diseño (derivas de tu Tabla XL); I = 1.5 es el sismo máximo considerado (Tabla XLIII, desplazamientos escalados). Umbrales: derivas 0.005 / 0.010 / 0.015 / 0.020 (el último es supuesto) y desplazamiento del aislador 292 mm (catálogo), 404 mm (DTM) y 525 mm (supuesto: 300% de deformación por corte).</div></div>
+<div class="p b"><label><input type="checkbox" id="sl" checked> Losas</label><label><input type="checkbox" id="br" checked> Arriostres</label><label><input type="checkbox" id="sb" checked> Sótano</label><label>Amplificación <input type="range" id="am" min="1" max="6" value="3" style="width:80px"><b id="av">×3</b></label><button id="sm">Iniciar sismo</button><button id="rs">Reiniciar</button></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const T=THREE,cv=document.getElementById('c'),$=id=>document.getElementById(id);
+const R=new T.WebGLRenderer({canvas:cv,antialias:true,alpha:true});R.setPixelRatio(Math.min(devicePixelRatio,2));
+const S=new T.Scene(),C=new T.PerspectiveCamera(40,1,.1,800);
+S.add(new T.AmbientLight(0xffffff,.8));const DL=new T.DirectionalLight(0xffffff,.65);DL.position.set(30,60,40);S.add(DL);
+const gr=new T.GridHelper(200,40,0x888888,0x888888);gr.material.transparent=true;gr.material.opacity=.25;gr.position.y=.02;S.add(gr);
+const mt=(c,o)=>new T.MeshLambertMaterial(Object.assign({color:c},o||{}));
+const M={col:mt(0xc0392b),bm:mt(0x2f6db5),vg:mt(0xd884b4),br:mt(0x9fcc1a),sl:mt(0x8a8f98,{transparent:true,opacity:.3,depthWrite:false}),
+cn:mt(0xa5a39b),wl:mt(0xa5a39b,{transparent:true,opacity:.35,depthWrite:false}),is:mt(0xf59e0b)};
+const XS={A:0,B:5.32,C:6.9,D:8.7,E:12,F:15.44,G:19.38,H:23.85},YS={1:0,2:6.22,3:8.03,4:12,5:17.15,6:20.53,7:23.86};
+const COLS={7:'ABCDEFGH',6:'AGH',5:'AFGH',4:'ABDEFGH',3:'EH',2:'EH',1:'EFGH'};
+const BAYS=[[0,12,0,17.15],[0,17.15,0,20.53],[0,20.53,0,23.86],[12,0,15.44,0],[15.44,0,19.38,0],[19.38,0,23.85,0],[23.85,17.15,23.85,20.53],[23.85,20.53,23.85,23.86],[8.7,12,12,12]];
+const X=x=>x-12,Z=y=>12-y,W=23.85,D=23.86;
+const LV=[4.44,7.74,11.04,14.34,17.64,20.94,24.24,27.54,30.84];
+const UF=[0,.00264,.006064,.009732,.013604,.017358,.020817,.023832,.026379];   // Tabla XLII
+const UI=[.481326,.493763,.506512,.519109,.531553,.543481,.554642,.564856,.574152]; // Tabla XLIII
+function build(iso,ox){
+ const o={iso,mem:[],isl:[],G:{},bm:[...Array(9)].map(()=>M.br.clone()),cm:[...Array(9)].map(()=>M.col.clone())},root=new T.Group();root.position.x=ox;S.add(root);
+ for(const n of ['C','B','V','Br','Sl','Sb','Is']){o.G[n]=new T.Group();root.add(o.G[n])}
+ const bt=iso?.22:.16;
+ function reg(q,g,st){q.updateMatrix();q.matrixAutoUpdate=false;q.userData={M0:q.matrix.clone(),st};o.G[g].add(q);if(st!==undefined)o.mem.push(q)}
+ function bx(g,m,x,e,y,sx,se,sy,st){const q=new T.Mesh(new T.BoxGeometry(sx,se,sy),m);q.position.set(X(x),e,Z(y));reg(q,g,st)}
+ function strut(a,b,st){const d=b.clone().sub(a),q=new T.Mesh(new T.BoxGeometry(bt,bt,d.length()),o.bm[st]);q.position.copy(a).add(b).multiplyScalar(.5);q.lookAt(b);reg(q,'Br',st)}
+ function level(e0,e1,brace,st){const h=e1-e0;
+  for(const r in COLS)for(const l of COLS[r])bx('C',o.cm[st],XS[l],(e0+e1)/2,YS[r],.42,h,.4,st);
+  for(const l of 'ABDEFGH'){const a=XS[l]<12?12:0;bx('B',M.bm,XS[l],e1-.22,(a+D)/2,.22,.45,D-a,st)}
+  bx('B',M.bm,W/2,e1-.22,D,W,.45,.22,st);bx('B',M.bm,W/2,e1-.22,12,W,.45,.22,st);bx('B',M.bm,(12+W)/2,e1-.22,0,W-12,.45,.22,st);
+  for(let y=1.2;y<D;y+=1.9){if(Math.abs(y-12)<.6)continue;const a=y>12?0:12;bx('V',M.vg,(a+W)/2,e1-.3,y,W-a,.25,.12,st)}
+  bx('Sl',M.sl,W/2,e1-.06,(12+D)/2,W,.12,D-12,st);bx('Sl',M.sl,(12+W)/2,e1-.06,6,W-12,.12,12,st);
+  if(brace)for(const b of BAYS){const a=new T.Vector3(X(b[0]),e0,Z(b[1])),c=new T.Vector3(X(b[2]),e0,Z(b[3])),p=new T.Vector3((a.x+c.x)/2,e1-.45,(a.z+c.z)/2);strut(a,p,st);strut(c,p,st)}}
+ level(iso?3.64:2.5,4.44,false,0);
+ for(let i=1;i<=8;i++)level(LV[i-1],LV[i],true,i);
+ bx('Sb',M.cn,W/2,-.45,(12+D)/2,W,.9,D-12);bx('Sb',M.cn,(12+W)/2,-.45,6,W-12,.9,12);
+ [[W/2,D,W],[W/2,12,W],[(12+W)/2,0,W-12]].forEach(p=>bx('Sb',M.wl,p[0],1.25,p[1],p[2],2.5,.25));
+ [[0,(12+D)/2,D-12],[W,D/2,D],[12,6,12]].forEach(p=>bx('Sb',M.wl,p[0],1.25,p[1],.25,2.5,p[2]));
+ const geo=new T.CylinderGeometry(.3,.3,.34,24);geo.translate(0,3.47,0);
+ for(const r in COLS)for(const l of COLS[r]){bx('Sb',M.cn,XS[l],1.25,YS[r],.8,2.5,.8);
+  if(iso){bx('Sb',M.cn,XS[l],2.9,YS[r],1,.8,1);const q=new T.Mesh(geo,M.is);q.matrixAutoUpdate=false;q.userData={x:X(XS[l]),z:Z(YS[r])};o.G.Is.add(q);o.isl.push(q)}}
+ o.root=root;return o}
+const FX=build(false,-24),IS=build(true,24),SH=new T.Matrix4();
+const IMAT=M.is.clone();IS.isl.forEach(q=>q.material=IMAT);
+const DR=[0,.0056,.0082,.0088,.0089,.0086,.0078,.0067,.0056],UD=[0];for(let s=1;s<=8;s++)UD[s]=UD[s-1]+DR[s]*3.3;
+const G=(t,p)=>(.75*Math.sin(6.283*t/p)+.35*Math.sin(6.283*t/(p*.55)+1.3)+.2*Math.sin(6.283*t/(p*1.7)+.4))/1.1;
+const CL=[0x9fcc1a,0xf5c518,0xf97316,0xdc2626];
+function dcol(d){const k=d<.005?0:d<.01?1:2,t=Math.min(1,(d-[0,.005,.01][k])/.005);return new T.Color(CL[k]).lerp(new T.Color(CL[k+1]),t)}
+const RP=[[0,0],[3,.05],[15,.4],[28,1],[38,1.5],[55,2.6]];
+function ramp(t){for(let i=1;i<RP.length;i++)if(t<=RP[i][0]){const a=RP[i-1],b=RP[i];return a[1]+(b[1]-a[1])*(t-a[0])/(b[0]-a[0])}return 2.6}
+const DM=new T.Matrix4(),cf=(e0,e1,u0,u1)=>{const b=(u1-u0)/(e1-e0);return[b,u0-b*e0]};
+let run=false,tm=0,col=-1,drop=0,rupt=false,rdrop=0;
+function apply(o,C2,fn){for(const q of o.mem){const s=q.userData.st,c=C2[s];SH.set(1,c[0],0,c[1],0,1,0,0,0,0,1,0,0,0,0,1);q.matrix.multiplyMatrices(SH,q.userData.M0);const dy=fn(q,s);if(dy)q.matrix.premultiply(DM.makeTranslation(0,dy,0));q.matrixWorldNeedsUpdate=true}}
+function frame(){
+ const I=ramp(tm),amp=+$('am').value,gF=G(tm,1.15),gI=G(tm,2.8),gx=I*.15*(.6*Math.sin(tm*14)+.4*Math.sin(tm*23+1));
+ FX.root.position.x=-24+gx;IS.root.position.x=24+gx;gr.position.x=gx;
+ let mx=0,ms=0;for(let s=1;s<=8;s++){const d=I*DR[s];if(d>mx){mx=d;ms=s}FX.bm[s].color.copy(dcol(d));FX.cm[s].color.set(d>=.02?0xdc2626:0xc0392b)}
+ if(col<0&&mx>=.02)col=ms;if(col>0)drop+=(3-drop)*.05;
+ const cF=[[0,0]],f=amp*I*gF;for(let s=1;s<=8;s++)cF[s]=cf(LV[s-1],LV[s],UD[s-1]*f,UD[s]*f);
+ apply(FX,cF,(q,s)=>{const c=q.parent===FX.G.C,b=q.parent===FX.G.Br;
+  if(b)q.visible=!(I*DR[s]>=.015+(q.id%2)*.0025)&&!(col>0&&s===col);if(c)q.visible=!(col>0&&s===col);
+  return col>0&&((c||b)?s>col:s>=col)?-drop:0});
+ const j=amp*(I/1.5)*gI,pk=.4754*I/1.5,cI=[cf(3.64,4.44,.480282*j,UI[0]*j)];for(let s=1;s<=8;s++)cI[s]=cf(LV[s-1],LV[s],UI[s-1]*j,UI[s]*j);
+ if(!rupt&&pk>=.525)rupt=true;if(rupt)rdrop+=(.34-rdrop)*.1;IS.G.Is.visible=!rupt;
+ IMAT.color.copy(new T.Color(0xf59e0b).lerp(new T.Color(0xdc2626),Math.min(1,Math.max(0,(pk-.292)/.233))));
+ for(let s=1;s<=8;s++)IS.bm[s].color.copy(dcol(I/1.5*.0033));
+ apply(IS,cI,()=>-rdrop);
+ const k=j*.4754/.34;for(const q of IS.isl){q.matrix.set(1,k,0,q.userData.x-k*3.3,0,1,0,0,0,0,1,q.userData.z,0,0,0,1);q.matrixWorldNeedsUpdate=true}
+ $('ph').textContent='I = '+I.toFixed(2)+' · t = '+tm.toFixed(0)+' s';$('bf').style.width=Math.min(100,I/2.6*100)+'%';
+ $('s1').textContent=col>0?'Colapso del piso '+col+' y caída de los pisos superiores':mx<.005?'Elástico, sin daño':mx<.01?'Pandeo de arriostres (daño moderado)':mx<.015?'Daño severo en arriostres':'Fractura de arriostres, cerca del colapso';
+ $('s2').textContent=rupt?'Aisladores sobrepasados: se pierde el aislamiento y el edificio cae sobre su base':pk<.292?'Aisladores dentro del desplazamiento de catálogo':pk<.404?'Sobre los 292 mm de catálogo':'Sobre el DTM de diseño (404 mm), aisladores al límite';
+}
+function reset(){tm=0;col=-1;drop=0;rupt=false;rdrop=0;for(const o of [FX,IS])o.mem.forEach(q=>q.visible=true);frame()}
+reset();
+let th=.55,ph=1.1,r=120;const tg=new T.Vector3(0,13,0);
+const P=new Map();let pd=0;
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);P.set(e.pointerId,[e.clientX,e.clientY])});
+cv.addEventListener('pointerup',e=>{P.delete(e.pointerId);pd=0});
+cv.addEventListener('pointermove',e=>{if(!P.has(e.pointerId))return;const o=P.get(e.pointerId);
+ if(P.size==1){th-=(e.clientX-o[0])*.007;ph=Math.min(1.5,Math.max(.15,ph-(e.clientY-o[1])*.007))}
+ P.set(e.pointerId,[e.clientX,e.clientY]);
+ if(P.size==2){const [a,b]=[...P.values()],d=Math.hypot(a[0]-b[0],a[1]-b[1]);if(pd)r=Math.min(300,Math.max(25,r*pd/d));pd=d}});
+cv.addEventListener('wheel',e=>{e.preventDefault();r=Math.min(300,Math.max(25,r*(1+e.deltaY*.001)))},{passive:false});
+$('sl').onchange=e=>{FX.G.Sl.visible=IS.G.Sl.visible=e.target.checked};
+$('br').onchange=e=>{FX.G.Br.visible=IS.G.Br.visible=e.target.checked};
+$('sb').onchange=e=>{FX.G.Sb.visible=IS.G.Sb.visible=e.target.checked};
+$('am').oninput=e=>{$('av').textContent='×'+e.target.value;frame()};
+$('sm').onclick=()=>{run=!run;$('sm').textContent=run?'Pausar':'Continuar'};$('rs').onclick=()=>{run=false;$('sm').textContent='Iniciar sismo';reset()};
+const v=new T.Vector3();
+function lab(id,x){v.set(x,34,0).project(C);const e=$(id);e.style.left=(v.x*.5+.5)*cv.clientWidth+'px';e.style.top=(-v.y*.5+.5)*cv.clientHeight+'px'}
+function rs(){const w=$('w').clientWidth,h=$('w').clientHeight;R.setSize(w,h,false);C.aspect=w/h;C.updateProjectionMatrix()}
+addEventListener('resize',rs);rs();
+let last=0;(function loop(t){const dt=Math.min(.05,(t-last)/1000);last=t;if(run){tm+=dt;frame()}
+ C.position.set(tg.x+r*Math.sin(ph)*Math.sin(th),tg.y+r*Math.cos(ph),tg.z+r*Math.sin(ph)*Math.cos(th));C.lookAt(tg);
+ R.render(S,C);lab('l1',-24);lab('l2',24);requestAnimationFrame(loop)})(0);
+</script></body></html>
